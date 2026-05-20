@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score # NUEVO: Importamos f1_score
 import re
 
 # --- Función para separar palabras pegadas ---
@@ -86,16 +86,14 @@ if archivo_subido is not None:
         
         cols_disponibles.append(c)
     
-    # --- MEJORA: Imputación estrictamente matemática ---
+    # Imputación estrictamente matemática
     for col_name in cols_disponibles:
-        # Preguntamos si es 100% seguro que es un número
         if pd.api.types.is_numeric_dtype(df[col_name]):
             if df[col_name].min() == 0:
                 df[col_name] = df[col_name].fillna(0)
             else:
                 df[col_name] = df[col_name].fillna(df[col_name].median())
         else:
-            # Para CUALQUIER otra cosa (textos, strings, objetos)
             df[col_name] = df[col_name].fillna("Desconocido")
 
     # --- 3. SELECCIÓN DE VARIABLES ---
@@ -171,14 +169,21 @@ if archivo_subido is not None:
             model = LogisticRegression(max_iter=1000)
             model.fit(X_encoded, y)
             preds = model.predict(X_encoded)
+            
+            # --- NUEVO: Cálculo de métricas ---
             acc = accuracy_score(y, preds) * 100
+            f1 = f1_score(y, preds, zero_division=0) * 100
             
             st.sidebar.markdown(f"""
                 <div style="text-align: center; margin-top: 10px;">
-                    <p style="margin-bottom: 0px; font-size: 16px;">Precisión del Modelo:</p>
+                    <p style="margin-bottom: 0px; font-size: 16px;">Precisión Global:</p>
                     <h1 style="color: #0062ff; margin-top: 0px; font-size: 40px;">{acc:.1f}%</h1>
+                    <p style="margin-bottom: 5px; font-size: 16px; color: #27ae60;"><b>F1-Score: {f1:.1f}%</b></p>
                 </div>
             """, unsafe_allow_html=True)
+            
+            # Nota explicativa sobre el F1-Score para RR.HH.
+            st.sidebar.caption("💡 *El **F1-Score** es la métrica clave de fiabilidad: mide la capacidad del modelo para detectar fugas reales de talento sin generar falsas alarmas.*")
             
             if len(current_selection) > 15:
                 st.sidebar.warning("⚠️ Modelo muy complejo: Riesgo de sobreajuste (ruido estadístico).")
