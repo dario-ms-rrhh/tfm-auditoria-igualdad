@@ -109,7 +109,7 @@ if archivo_subido is not None:
                 X_all_encoded = pd.get_dummies(X_all, drop_first=True)
                 
                 if not X_all_encoded.empty and X_all_encoded.shape[1] > 0:
-                    rf = RandomForestClassifier(n_estimators=50, random_state=42)
+                    rf = RandomForestClassifier(n_estimators=50, random_state=42, class_weight='balanced')
                     rf.fit(X_all_encoded, y_all)
                     
                     importances = rf.feature_importances_
@@ -166,7 +166,7 @@ if archivo_subido is not None:
         X_encoded = pd.get_dummies(X, drop_first=True)
         
         if not X_encoded.empty and X_encoded.shape[1] > 0:
-            model = LogisticRegression(max_iter=1000)
+            model = LogisticRegression(max_iter=1000, class_weight='balanced')
             model.fit(X_encoded, y)
             preds = model.predict(X_encoded)
             
