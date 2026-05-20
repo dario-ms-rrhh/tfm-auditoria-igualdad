@@ -214,7 +214,7 @@ if archivo_subido is not None:
         col_main1, col_main2 = st.columns([1, 1])
 
         with col_main1:
-            st.subheader("Simulador de Perfiles (Gemelo Digital)")
+            st.subheader("Simulador de Perfiles")
             inputs_usuario = {}
             
             variables_ordenadas = []
