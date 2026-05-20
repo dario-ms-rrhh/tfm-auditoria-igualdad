@@ -72,48 +72,44 @@ if archivo_subido is not None:
     df = df.dropna(subset=[col_target])
     df['Fuga'] = df[col_target].apply(lambda x: 1 if x == valor_fuga else 0)
     
-    # --- FILTRO INTELIGENTE DE COLUMNAS (Evita que la app se rompa con texto libre o fechas) ---
+    # --- FILTRO INTELIGENTE DE COLUMNAS ---
     cols_candidatas = [c for c in df.columns if c not in [col_target, 'Fuga']]
     cols_disponibles = []
     
     for c in cols_candidatas:
-        # 1. Intentar detectar si es una columna de fecha leyendo los nombres o tipos
         if 'fecha' in c.lower() or 'date' in c.lower():
             continue
             
-        # 2. Si es texto, comprobar que no sea texto libre (ej: nombres de empleados o IDs únicos)
-        if df[c].dtype == 'object':
-            # Si casi cada fila tiene un texto diferente (más del 85% de valores únicos), es un ID o Nombre libre. Lo ignoramos.
+        if pd.api.types.is_object_dtype(df[c]) or pd.api.types.is_string_dtype(df[c]):
             if df[c].nunique() > (len(df) * 0.85):
                 continue
         
         cols_disponibles.append(c)
     
-    # Imputación contextual e inteligente para los nulos residuales
+    # --- MEJORA: Imputación estrictamente matemática ---
     for col_name in cols_disponibles:
-        if df[col_name].dtype == 'object':
-            df[col_name] = df[col_name].fillna("Desconocido")
-        else:
+        # Preguntamos si es 100% seguro que es un número
+        if pd.api.types.is_numeric_dtype(df[col_name]):
             if df[col_name].min() == 0:
                 df[col_name] = df[col_name].fillna(0)
             else:
                 df[col_name] = df[col_name].fillna(df[col_name].median())
+        else:
+            # Para CUALQUIER otra cosa (textos, strings, objetos)
+            df[col_name] = df[col_name].fillna("Desconocido")
 
     # --- 3. SELECCIÓN DE VARIABLES ---
     st.sidebar.write("---")
     st.sidebar.header("2. Configurar Modelo")
     
-    # BOTÓN DE AUTO-SELECCIÓN INTELIGENTE (Ahora protegido contra errores de matriz)
     if st.sidebar.button("Auto-Selección Inteligente", use_container_width=True):
         if len(cols_disponibles) > 0:
             with st.spinner('Analizando relevancia de todas las variables...'):
                 X_all = df[cols_disponibles]
                 y_all = df['Fuga']
                 
-                # Convertimos categóricas a numéricas de forma segura
                 X_all_encoded = pd.get_dummies(X_all, drop_first=True)
                 
-                # Doble verificación de seguridad: asegurar que la matriz final tiene datos y columnas válidas
                 if not X_all_encoded.empty and X_all_encoded.shape[1] > 0:
                     rf = RandomForestClassifier(n_estimators=50, random_state=42)
                     rf.fit(X_all_encoded, y_all)
@@ -144,7 +140,7 @@ if archivo_subido is not None:
                 else:
                     st.sidebar.error("Los datos procesados no tienen un formato numérico compatible.")
         else:
-            st.sidebar.error("No se han encontrado variables aptas para análisis predictivo en el archivo.")
+            st.sidebar.error("No se han encontrado variables aptas para análisis predictivo.")
 
     if 'selected_vars' not in st.session_state:
         st.session_state['selected_vars'] = cols_disponibles[:min(5, len(cols_disponibles))]
@@ -227,8 +223,8 @@ if archivo_subido is not None:
             for var in variables_ordenadas:
                 nombre_limpio_slider = limpiar_nombre(var)
                 
-                if df[var].dtype == 'object' or df[var].nunique() < 5:
-                    opciones = sorted(df[var].unique().tolist())
+                if df[var].dtype == 'object' or pd.api.types.is_string_dtype(df[var]) or df[var].nunique() < 5:
+                    opciones = sorted(df[var].astype(str).unique().tolist())
                     inputs_usuario[var] = st.selectbox(f"{nombre_limpio_slider}:", opciones, key=f"input_{var}")
                 else:
                     min_v = df[var].min()
