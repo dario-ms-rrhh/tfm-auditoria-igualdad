@@ -54,6 +54,11 @@ archivo_subido = st.file_uploader("Sube tu archivo CSV", type=["csv"])
 if archivo_subido is not None:
     df = pd.read_csv(archivo_subido, sep=None, engine='python')
     
+    # Limpieza inicial de columnas fantasma de Excel
+    df = df.dropna(how='all', axis=1)
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+    
+    # --- 2. PANEL DE MAPEO (DATA MAPPING) ---
     st.sidebar.header("1. Mapeo de Variables")
     st.sidebar.markdown("Indica cómo se llaman las columnas clave en tu archivo:")
     
@@ -64,45 +69,85 @@ if archivo_subido is not None:
     opciones_genero = ["Ninguna / No disponible"] + list(df.columns)
     col_genero = st.sidebar.selectbox("Columna de Género (Obligatoria para auditoría):", opciones_genero)
     
+    df = df.dropna(subset=[col_target])
     df['Fuga'] = df[col_target].apply(lambda x: 1 if x == valor_fuga else 0)
-    cols_disponibles = [c for c in df.columns if c not in [col_target, 'Fuga']]
-    df = df.dropna(subset=cols_disponibles + ['Fuga'])
+    
+    # --- FILTRO INTELIGENTE DE COLUMNAS (Evita que la app se rompa con texto libre o fechas) ---
+    cols_candidatas = [c for c in df.columns if c not in [col_target, 'Fuga']]
+    cols_disponibles = []
+    
+    for c in cols_candidatas:
+        # 1. Intentar detectar si es una columna de fecha leyendo los nombres o tipos
+        if 'fecha' in c.lower() or 'date' in c.lower():
+            continue
+            
+        # 2. Si es texto, comprobar que no sea texto libre (ej: nombres de empleados o IDs únicos)
+        if df[c].dtype == 'object':
+            # Si casi cada fila tiene un texto diferente (más del 85% de valores únicos), es un ID o Nombre libre. Lo ignoramos.
+            if df[c].nunique() > (len(df) * 0.85):
+                continue
+        
+        cols_disponibles.append(c)
+    
+    # Imputación contextual e inteligente para los nulos residuales
+    for col_name in cols_disponibles:
+        if df[col_name].dtype == 'object':
+            df[col_name] = df[col_name].fillna("Desconocido")
+        else:
+            if df[col_name].min() == 0:
+                df[col_name] = df[col_name].fillna(0)
+            else:
+                df[col_name] = df[col_name].fillna(df[col_name].median())
 
     # --- 3. SELECCIÓN DE VARIABLES ---
     st.sidebar.write("---")
     st.sidebar.header("2. Configurar Modelo")
     
+    # BOTÓN DE AUTO-SELECCIÓN INTELIGENTE (Ahora protegido contra errores de matriz)
     if st.sidebar.button("Auto-Selección Inteligente", use_container_width=True):
-        with st.spinner('Analizando relevancia de todas las variables...'):
-            X_all = df[cols_disponibles]
-            y_all = df['Fuga']
-            X_all_encoded = pd.get_dummies(X_all, drop_first=True)
-            
-            rf = RandomForestClassifier(n_estimators=50, random_state=42)
-            rf.fit(X_all_encoded, y_all)
-            
-            importances = rf.feature_importances_
-            col_importance = {col: 0.0 for col in cols_disponibles}
-            for feat, imp in zip(X_all_encoded.columns, importances):
-                for orig_col in cols_disponibles:
-                    if feat == orig_col or feat.startswith(orig_col + '_'):
-                        col_importance[orig_col] += imp
-                        break
-            
-            top_10_cols = sorted(col_importance, key=col_importance.get, reverse=True)[:10]
-            
-            if col_genero != "Ninguna / No disponible" and col_genero not in top_10_cols:
-                top_10_cols[-1] = col_genero 
+        if len(cols_disponibles) > 0:
+            with st.spinner('Analizando relevancia de todas las variables...'):
+                X_all = df[cols_disponibles]
+                y_all = df['Fuga']
                 
-            st.session_state['selected_vars'] = top_10_cols
-            
-            for col_name in cols_disponibles:
-                st.session_state[f"check_{col_name}"] = (col_name in top_10_cols)
+                # Convertimos categóricas a numéricas de forma segura
+                X_all_encoded = pd.get_dummies(X_all, drop_first=True)
                 
-            st.rerun()
+                # Doble verificación de seguridad: asegurar que la matriz final tiene datos y columnas válidas
+                if not X_all_encoded.empty and X_all_encoded.shape[1] > 0:
+                    rf = RandomForestClassifier(n_estimators=50, random_state=42)
+                    rf.fit(X_all_encoded, y_all)
+                    
+                    importances = rf.feature_importances_
+                    col_importance = {col: 0.0 for col in cols_disponibles}
+                    for feat, imp in zip(X_all_encoded.columns, importances):
+                        for orig_col in cols_disponibles:
+                            if feat == orig_col or feat.startswith(orig_col + '_'):
+                                col_importance[orig_col] += imp
+                                break
+                    
+                    top_10_size = min(10, len(cols_disponibles))
+                    top_10_cols = sorted(col_importance, key=col_importance.get, reverse=True)[:top_10_size]
+                    
+                    if col_genero != "Ninguna / No disponible" and col_genero in cols_disponibles and col_genero not in top_10_cols:
+                        if len(top_10_cols) == top_10_size:
+                            top_10_cols[-1] = col_genero
+                        else:
+                            top_10_cols.append(col_genero)
+                        
+                    st.session_state['selected_vars'] = top_10_cols
+                    
+                    for col_name in cols_disponibles:
+                        st.session_state[f"check_{col_name}"] = (col_name in top_10_cols)
+                        
+                    st.rerun()
+                else:
+                    st.sidebar.error("Los datos procesados no tienen un formato numérico compatible.")
+        else:
+            st.sidebar.error("No se han encontrado variables aptas para análisis predictivo en el archivo.")
 
     if 'selected_vars' not in st.session_state:
-        st.session_state['selected_vars'] = cols_disponibles[:5]
+        st.session_state['selected_vars'] = cols_disponibles[:min(5, len(cols_disponibles))]
 
     current_selection = []
     c1, c2 = st.sidebar.columns(2)
@@ -121,12 +166,12 @@ if archivo_subido is not None:
     st.session_state['selected_vars'] = current_selection
 
     # --- 4. ENTRENAMIENTO Y PRECISIÓN ---
-    if len(current_selection) > 0:
+    if len(current_selection) > 0 and not df.empty:
         X = df[current_selection]
         y = df['Fuga']
         X_encoded = pd.get_dummies(X, drop_first=True)
         
-        if not X_encoded.empty:
+        if not X_encoded.empty and X_encoded.shape[1] > 0:
             model = LogisticRegression(max_iter=1000)
             model.fit(X_encoded, y)
             preds = model.predict(X_encoded)
@@ -149,7 +194,7 @@ if archivo_subido is not None:
             st.sidebar.markdown("---")
             st.sidebar.markdown("### Top Predictoras:")
             coef_df = pd.DataFrame({'var': X_encoded.columns, 'abs_coef': np.abs(model.coef_[0])})
-            top_3 = coef_df.sort_values(by='abs_coef', ascending=False).head(3)
+            top_3 = coef_df.sort_values(by='abs_coef', ascending=False).head(min(3, len(coef_df)))
             for i, row in enumerate(top_3['var'], 1):
                 clean_name = limpiar_nombre(row.split('_')[0])
                 st.sidebar.write(f"**{i}º** {clean_name}")
@@ -160,7 +205,6 @@ if archivo_subido is not None:
         st.sidebar.warning("Selecciona al menos una variable para entrenar el modelo.")
         acc = 0
 
-    # SELLO RGPD EN EL SIDEBAR
     st.sidebar.markdown("---")
     st.sidebar.caption("🛡️ **Cumplimiento RGPD:** Esta herramienta procesa los datos temporalmente en memoria local. No se almacena ni comparte ninguna información, garantizando la privacidad y minimización de datos corporativos.")
 
@@ -169,7 +213,7 @@ if archivo_subido is not None:
         col_main1, col_main2 = st.columns([1, 1])
 
         with col_main1:
-            st.subheader("Simulador de Perfiles")
+            st.subheader("Simulador de Perfiles (Gemelo Digital)")
             inputs_usuario = {}
             
             variables_ordenadas = []
@@ -222,7 +266,6 @@ if archivo_subido is not None:
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             st.markdown('</div>', unsafe_allow_html=True)
             
-            # NUEVO: Mensajes de interpretación RRHH
             if prob < 30:
                 st.success("🟢 **Riesgo Bajo:** Condiciones de retención óptimas para este perfil. No se requiere acción inmediata.")
             elif prob < 70:
